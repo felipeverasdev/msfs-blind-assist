@@ -392,6 +392,45 @@ public class TaxiRoutePlannerServiceTests
         Assert.Equal(TaxiGuidanceState.Taxiing, manager.State);
     }
 
+    [Fact]
+    public void ArmArrivalPlan_RetainsGraphAndProvider_AndArmsArrivalState()
+    {
+        var graph = CreateSampleGraph();
+        var provider = new FakeAirportDataProvider();
+        var announcer = new ScreenReaderAnnouncer(System.IntPtr.Zero);
+        using var manager = new TaxiGuidanceManager(announcer);
+
+        var gate = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 14,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Heading = 90.0,
+            Radius = 25.0,
+            Type = 9
+        };
+
+        var plan = new PlannedArrivalPlan
+        {
+            AirportIcao = "SBBR",
+            RunwayId = "11R",
+            DestinationGate = gate,
+            SelectedExit = null,
+            Route = new TaxiRoute { DestinationName = "Gate 14" },
+            Summary = "Arrival taxi plan for Gate 14"
+        };
+
+        manager.ArmArrivalPlan(plan, graph, provider);
+
+        Assert.True(TaxiPlannedRouteState.Instance.HasArmedArrival);
+        Assert.Equal("SBBR", TaxiPlannedRouteState.Instance.ArrivalPlan?.AirportIcao);
+        Assert.Equal(gate, TaxiPlannedRouteState.Instance.ArrivalPlan?.DestinationGate);
+
+        TaxiPlannedRouteState.Instance.DisarmArrival();
+        Assert.False(TaxiPlannedRouteState.Instance.HasArmedArrival);
+    }
+
     private sealed class FakeAirportDataProvider : IAirportDataProvider
     {
         public bool DatabaseExists => true;

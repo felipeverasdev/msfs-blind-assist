@@ -4516,10 +4516,17 @@ public partial class TaxiGuidanceManager : IDisposable
                     {
                         string gateName = arrPlan.DestinationGate.DescribeIdentity();
                         string? error = LoadRoute(
-                            arrivalProvider, arrIcao,
-                            _lastLat, _lastLon, _lastHeading,
-                            gateNode.NodeId, gateName,
+                            dataProvider: arrivalProvider,
+                            icao: arrIcao,
+                            aircraftLat: _lastLat,
+                            aircraftLon: _lastLon,
+                            aircraftHeading: _lastHeading,
+                            destinationNodeId: gateNode.NodeId,
+                            destinationName: gateName,
                             taxiwaySequence: null,
+                            destinationHeading: arrPlan.DestinationGate.Heading,
+                            destinationThresholdLat: arrPlan.DestinationGate.Latitude,
+                            destinationThresholdLon: arrPlan.DestinationGate.Longitude,
                             prebuiltGraph: arrivalGraph,
                             announceSummary: false);
 
