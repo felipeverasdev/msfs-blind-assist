@@ -675,7 +675,8 @@ public partial class MainForm
              taxiGuidanceManager.State == TaxiGuidanceState.LiningUp ||
              taxiGuidanceManager.State == TaxiGuidanceState.LandingRollout ||
              taxiGuidanceManager.State == TaxiGuidanceState.BacktrackingOnRunway ||
-             taxiGuidanceManager.State == TaxiGuidanceState.BacktrackDeparture))
+             taxiGuidanceManager.State == TaxiGuidanceState.BacktrackDeparture ||
+             MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.HasArmedDeparture))
         {
             if (e.PositionData.HasValue)
             {

@@ -2394,6 +2394,14 @@ public partial class TaxiGuidanceManager : IDisposable
         _lastHeading = headingTrue;
         _positionInitialized = true;
 
+        if (_state == TaxiGuidanceState.Inactive && MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.HasArmedDeparture)
+        {
+            if (CheckDeparturePushbackTrigger(lat, lon, headingMag, headingTrue, groundSpeedKts))
+            {
+                return;
+            }
+        }
+
         // Yaw-rate tracking for rollout anticipation (wrap-safe, low-passed).
         var nowYaw = MSFSBlindAssist.Utils.SimClock.UtcNow;
         if (_lastYawSampleTime != DateTime.MinValue)
@@ -4488,6 +4496,35 @@ public partial class TaxiGuidanceManager : IDisposable
             }
             else if (_landingExitOffPavement)
             {
+                if (MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.HasArmedArrival
+                    && MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArrivalPlan is { } arrPlan
+                    && _graph != null && _dataProvider != null && !string.IsNullOrEmpty(_icao))
+                {
+                    int startNodeId = _graph.FindNearestNode(_lastLat, _lastLon, excludeBridgeOnlyStandStubs: true)?.NodeId ?? -1;
+                    var gateNode = _graph.FindNearestNode(arrPlan.DestinationGate.Latitude, arrPlan.DestinationGate.Longitude);
+                    if (startNodeId >= 0 && gateNode != null)
+                    {
+                        string gateName = arrPlan.DestinationGate.DescribeIdentity();
+                        string? error = LoadRoute(
+                            _dataProvider, _icao,
+                            _lastLat, _lastLon, _lastHeading,
+                            gateNode.NodeId, gateName,
+                            taxiwaySequence: null,
+                            prebuiltGraph: _graph);
+
+                        if (error == null)
+                        {
+                            MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.DisarmArrival();
+                            StartGuidance(MSFSBlindAssist.Settings.SettingsManager.Current);
+                            string viaTaxiways = _route?.TaxiwaySequence.Count > 0
+                                ? $" via {string.Join(", ", _route.TaxiwaySequence)}"
+                                : "";
+                            AnnounceInstruction($"Off the runway at {exitName}. Taxi guidance continued to {gateName}{viaTaxiways}.");
+                            return;
+                        }
+                    }
+                }
+
                 AnnounceInstruction(
                     $"Off the runway at {exitName}. Stop and hold position. " +
                     $"Open the taxi planner to set a route to your gate.");
@@ -4798,6 +4835,61 @@ public partial class TaxiGuidanceManager : IDisposable
             _guidanceLog.Info(line);
         }
         catch { /* diagnostic only — never crash guidance for a log failure */ }
+    }
+
+    /// <summary>
+    /// Checks whether an armed departure plan is ready to automatically activate guidance after pushback.
+    /// </summary>
+    public bool CheckDeparturePushbackTrigger(double lat, double lon, double headingMag, double headingTrue, double groundSpeedKts, bool parkingBrakeSet = false)
+    {
+        if (!MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.HasArmedDeparture) return false;
+        var plan = MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.DeparturePlan;
+        if (plan == null) return false;
+
+        bool complete = MSFSBlindAssist.Navigation.Planning.DeparturePushbackWatch.CheckPushbackComplete(
+            plan, lat, lon, headingMag, groundSpeedKts, parkingBrakeSet);
+
+        if (!complete) return false;
+
+        MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.DisarmDeparture();
+
+        int destNodeId = plan.Route.Segments.Count > 0
+            ? plan.Route.Segments[^1].ToNode.NodeId
+            : -1;
+
+        if (_graph != null && _dataProvider != null && destNodeId >= 0 && !string.IsNullOrEmpty(plan.AirportIcao))
+        {
+            string destName = $"Runway {plan.RunwayId}";
+            string? err = LoadRoute(
+                _dataProvider, plan.AirportIcao,
+                lat, lon, headingTrue,
+                destNodeId, destName,
+                taxiwaySequence: null,
+                isRunwayDestination: true,
+                prebuiltGraph: _graph,
+                holdingPointName: !string.IsNullOrEmpty(plan.HoldingPointName) ? plan.HoldingPointName : null);
+
+            if (err == null)
+            {
+                StartGuidance(MSFSBlindAssist.Settings.SettingsManager.Current);
+                string via = _route?.TaxiwaySequence.Count > 0
+                    ? $" via {string.Join(", ", _route.TaxiwaySequence)}"
+                    : "";
+                _announcer.AnnounceImmediate($"Pushback complete. Taxi guidance active to runway {plan.RunwayId}{via}.");
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Arms a planned departure and starts position stream monitoring for pushback completion.
+    /// </summary>
+    public void ArmDeparturePlan(MSFSBlindAssist.Navigation.Planning.PlannedDeparturePlan plan)
+    {
+        MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArmDeparture(plan);
+        PositionStreamRequired?.Invoke(this, EventArgs.Empty);
     }
 
     public void Dispose()
