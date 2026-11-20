@@ -85,6 +85,9 @@ public static class TaxiRoutePlannerService
         var route = router.FindShortestPath(startNodeId, destinationNodeId);
         if (route == null) return null;
 
+        var taxiwayNames = RouteTaxiwaySequence.DistinctConsecutive(route.Segments);
+        route.TaxiwaySequence = taxiwayNames;
+
         var pushback = PushbackGeometryPlanner.CalculatePushback(spot, route, magVar);
 
         string cleanRwy = runwayId.StartsWith("Runway ", StringComparison.OrdinalIgnoreCase)
@@ -92,15 +95,38 @@ public static class TaxiRoutePlannerService
             : runwayId.Trim();
 
         string posDesc = spot != null
-            ? $"{spot.DescribeIdentity()} ({spot.Describe()})"
+            ? DescribeSpotWithTerminal(spot, icao)
             : "Current airport position";
 
-        string holdPoint = !string.IsNullOrWhiteSpace(holdingPointName)
-            ? holdingPointName
-            : $"Runway {cleanRwy} entrance";
+        string holdPoint;
+        if (!string.IsNullOrWhiteSpace(holdingPointName))
+        {
+            string cleanHp = holdingPointName.Trim();
+            if (cleanHp.StartsWith("Holding point ", StringComparison.OrdinalIgnoreCase))
+            {
+                cleanHp = cleanHp["Holding point ".Length..].Trim();
+            }
 
-        string taxiwayList = route.TaxiwaySequence.Count > 0
-            ? string.Join(", ", route.TaxiwaySequence)
+            if (cleanHp.Contains("entrance", StringComparison.OrdinalIgnoreCase) || cleanHp.Contains("runway", StringComparison.OrdinalIgnoreCase))
+            {
+                holdPoint = cleanHp;
+            }
+            else
+            {
+                holdPoint = $"{cleanHp} (Runway {cleanRwy} entrance)";
+            }
+        }
+        else if (taxiwayNames.Count > 0)
+        {
+            holdPoint = $"{taxiwayNames[^1]} (Runway {cleanRwy} entrance)";
+        }
+        else
+        {
+            holdPoint = $"Runway {cleanRwy} entrance";
+        }
+
+        string taxiwayList = taxiwayNames.Count > 0
+            ? string.Join(", ", taxiwayNames)
             : "(direct onto runway)";
 
         string distStr = FormatDistance(route.TotalDistanceMeters);
@@ -123,7 +149,7 @@ public static class TaxiRoutePlannerService
             Spot = spot,
             Pushback = pushback,
             Route = route,
-            HoldingPointName = holdPoint,
+            HoldingPointName = !string.IsNullOrWhiteSpace(holdingPointName) ? holdingPointName : holdPoint,
             TargetHeadingMag = pushback.PostPushbackHeadingMag,
             OriginLat = aircraftLat,
             OriginLon = aircraftLon,
@@ -167,10 +193,16 @@ public static class TaxiRoutePlannerService
         }
 
         TaxiRoute? route = null;
+        List<string>? arrivalTaxiways = null;
         if (chosenExit != null)
         {
             int startNode = chosenExit.ApronNodeId > 0 ? chosenExit.ApronNodeId : chosenExit.NodeId;
             route = new TaxiRouter(graph).FindShortestPath(startNode, gateNode.NodeId);
+            if (route != null)
+            {
+                arrivalTaxiways = RouteTaxiwaySequence.DistinctConsecutive(route.Segments);
+                route.TaxiwaySequence = arrivalTaxiways;
+            }
         }
 
         string cleanRwy = runwayId.StartsWith("Runway ", StringComparison.OrdinalIgnoreCase)
@@ -182,8 +214,8 @@ public static class TaxiRoutePlannerService
             ? $"{exitName} ({FormatDistance(chosenExit.DistanceFromThresholdFeet * 0.3048)} from threshold)"
             : "Nearest comfortable runway exit";
 
-        string taxiwayList = route != null && route.TaxiwaySequence.Count > 0
-            ? string.Join(", ", route.TaxiwaySequence)
+        string taxiwayList = arrivalTaxiways != null && arrivalTaxiways.Count > 0
+            ? string.Join(", ", arrivalTaxiways)
             : "(exit leads straight to stand)";
 
         string distStr = route != null ? FormatDistance(route.TotalDistanceMeters) : "distance to be calculated upon vacate";
@@ -194,7 +226,7 @@ public static class TaxiRoutePlannerService
             $"Runway: {cleanRwy}.",
             $"Recommended exit: {exitDesc}.",
             $"Taxi route from exit: {taxiwayList} ({distStr}).",
-            $"Gate details: {gate.Describe()}."
+            $"Gate details: {DescribeSpotWithTerminal(gate, icao)}."
         };
 
         string summary = string.Join("\r\n", lines);
@@ -210,6 +242,101 @@ public static class TaxiRoutePlannerService
             IsArmed = true,
             Summary = summary
         };
+    }
+
+    /// <summary>
+    /// Formats a parking spot description enriched with terminal and operational category (Domestic / International / Cargo).
+    /// </summary>
+    public static string DescribeSpotWithTerminal(ParkingSpot spot, string? icao)
+    {
+        string identity = spot.DescribeIdentity();
+        string baseDesc = spot.Describe();
+        string details = baseDesc;
+
+        if (details.StartsWith($"{identity} - ", StringComparison.OrdinalIgnoreCase))
+        {
+            details = details.Substring($"{identity} - ".Length);
+        }
+        else if (details.StartsWith(identity, StringComparison.OrdinalIgnoreCase))
+        {
+            details = details.Substring(identity.Length).TrimStart(' ', '-');
+        }
+
+        string? terminal = !string.IsNullOrWhiteSpace(spot.TerminalName)
+            ? ParkingSpot.SpeakableTerminalName(spot.TerminalName)
+            : null;
+
+        string? operationType = null;
+
+        if (ParkingTypes.IsCargo(spot.Type))
+        {
+            operationType = "Cargo";
+        }
+        else if (ParkingTypes.IsGaRamp(spot.Type))
+        {
+            operationType = "General Aviation / Executive";
+        }
+
+        // Airport-specific heuristic (SBGL / Galeão)
+        if (string.Equals(icao, "SBGL", StringComparison.OrdinalIgnoreCase))
+        {
+            string searchStr = $"{spot.Name} {identity}".Trim().ToUpperInvariant();
+            if (searchStr.Contains("TECA") || searchStr.Contains("CARGO"))
+            {
+                terminal ??= "Terminal de Cargas";
+                operationType ??= "Cargo";
+            }
+            else if (string.IsNullOrEmpty(terminal))
+            {
+                if (System.Text.RegularExpressions.Regex.IsMatch(searchStr, @"\b[A-B]\s*\d+") ||
+                    searchStr.StartsWith("A") || searchStr.StartsWith("B"))
+                {
+                    terminal = "Terminal 1";
+                    operationType ??= "Domestic";
+                }
+                else if (System.Text.RegularExpressions.Regex.IsMatch(searchStr, @"\bC\s*\d+") ||
+                         searchStr.StartsWith("C"))
+                {
+                    terminal = "Terminal 2";
+                    operationType ??= "Domestic / International";
+                }
+                else if (System.Text.RegularExpressions.Regex.IsMatch(searchStr, @"\b[D-E]\s*\d+") ||
+                         searchStr.StartsWith("D") || searchStr.StartsWith("E"))
+                {
+                    terminal = "Terminal 2 - Pier Sul";
+                    operationType ??= "International";
+                }
+            }
+        }
+
+        if (terminal != null && operationType == null)
+        {
+            if (terminal.Contains("Dom", StringComparison.OrdinalIgnoreCase) || terminal.Contains("Nac", StringComparison.OrdinalIgnoreCase))
+                operationType = "Domestic";
+            else if (terminal.Contains("Int", StringComparison.OrdinalIgnoreCase) || terminal.Contains("Sul", StringComparison.OrdinalIgnoreCase))
+                operationType = "International";
+        }
+
+        string terminalPart = "";
+        if (!string.IsNullOrEmpty(terminal))
+        {
+            terminalPart = operationType != null ? $"{terminal} ({operationType})" : terminal;
+        }
+        else if (operationType != null)
+        {
+            terminalPart = operationType;
+        }
+
+        if (!string.IsNullOrEmpty(terminalPart))
+        {
+            return !string.IsNullOrEmpty(details)
+                ? $"{identity} - {terminalPart} ({details})"
+                : $"{identity} - {terminalPart}";
+        }
+
+        return !string.IsNullOrEmpty(details)
+            ? $"{identity} ({details})"
+            : identity;
     }
 
     private static string FormatDistance(double meters)

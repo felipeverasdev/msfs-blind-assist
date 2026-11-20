@@ -132,17 +132,20 @@ public class TaxiRoutePlannerServiceTests
             graph: graph,
             spots: new[] { spot },
             destinationNodeId: 3,
-            holdingPointName: "Holding Point B1");
+            holdingPointName: "B1");
 
         Assert.NotNull(plan);
         Assert.Equal("SBBR", plan!.AirportIcao);
         Assert.Equal("11R", plan.RunwayId);
         Assert.True(plan.IsArmed);
         Assert.NotNull(plan.Pushback);
-        Assert.Equal("Holding Point B1", plan.HoldingPointName);
+        Assert.Equal("B1", plan.HoldingPointName);
         Assert.Contains("Departure taxi plan for Runway 11R at SBBR", plan.Summary);
         Assert.Contains("Gate 12", plan.Summary);
-        Assert.Contains("Holding Point B1", plan.Summary);
+        Assert.Contains("Holding point: B1 (Runway 11R entrance)", plan.Summary);
+        Assert.Contains("Taxi route: B", plan.Summary);
+        Assert.Single(plan.Route.TaxiwaySequence);
+        Assert.Equal("B", plan.Route.TaxiwaySequence[0]);
     }
 
     [Fact]
@@ -272,6 +275,65 @@ public class TaxiRoutePlannerServiceTests
         Assert.NotNull(state.ArrivalPlan.Route);
         // From Node 3 to Node 1 distance is 400 + 100 = 500m
         Assert.Equal(500.0, state.ArrivalPlan.TotalDistanceMeters);
+    }
+
+    [Fact]
+    public void DescribeSpotWithTerminal_SBGL_IdentifiesTerminalsAndOperations()
+    {
+        var spotA = new ParkingSpot { Name = "A", Number = 14, Type = 9 };
+        var descA = TaxiRoutePlannerService.DescribeSpotWithTerminal(spotA, "SBGL");
+        Assert.Contains("A 14", descA);
+        Assert.Contains("Terminal 1 (Domestic)", descA);
+
+        var spotB = new ParkingSpot { Name = "B", Number = 20, Type = 9 };
+        var descB = TaxiRoutePlannerService.DescribeSpotWithTerminal(spotB, "SBGL");
+        Assert.Contains("Terminal 1 (Domestic)", descB);
+
+        var spotC = new ParkingSpot { Name = "C", Number = 31, Type = 9 };
+        var descC = TaxiRoutePlannerService.DescribeSpotWithTerminal(spotC, "SBGL");
+        Assert.Contains("Terminal 2 (Domestic / International)", descC);
+
+        var spotD = new ParkingSpot { Name = "D", Number = 44, Type = 9 };
+        var descD = TaxiRoutePlannerService.DescribeSpotWithTerminal(spotD, "SBGL");
+        Assert.Contains("Terminal 2 - Pier Sul (International)", descD);
+
+        var spotCargo = new ParkingSpot { Name = "TECA", Number = 1, Type = 6 };
+        var descCargo = TaxiRoutePlannerService.DescribeSpotWithTerminal(spotCargo, "SBGL");
+        Assert.Contains("Cargo", descCargo);
+        Assert.Contains("Terminal de Cargas", descCargo);
+    }
+
+    [Fact]
+    public void PlanDeparture_ResolvesFallbackHoldingPointFromTaxiway()
+    {
+        var graph = CreateSampleGraph();
+
+        var spot = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Heading = 90.0,
+            Radius = 25.0,
+            Type = 9
+        };
+
+        var plan = TaxiRoutePlannerService.PlanDeparture(
+            icao: "SBGL",
+            runwayId: "10",
+            aircraftLat: -15.8690,
+            aircraftLon: -47.9200,
+            magVar: -23.0,
+            graph: graph,
+            spots: new[] { spot },
+            destinationNodeId: 3,
+            holdingPointName: null);
+
+        Assert.NotNull(plan);
+        // Fallback uses the last taxiway segment ("B") to name the entrance
+        Assert.Contains("Holding point: B (Runway 10 entrance)", plan!.Summary);
+        Assert.Contains("Taxi route: B", plan.Summary);
     }
 }
 
