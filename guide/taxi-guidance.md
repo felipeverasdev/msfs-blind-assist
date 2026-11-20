@@ -236,6 +236,7 @@ The planner has Alt shortcuts that jump straight to a control.
 | Alt+U | Progressive Taxi runway target |
 | Alt+W | Progressive Taxi taxiway or holding point target |
 | Alt+Y | Fill from SayIntentions |
+| Alt+Q | Plan Route |
 | Alt+C | Calculate Route |
 | Alt+S | Stop Guidance (also Last route summary) |
 
@@ -526,10 +527,10 @@ If Calculate fails, BA tells you why and puts the same reason in the summary box
 
 ## Planning Routes in Advance (Taxi Route Planner) {#taxi-route-planner}
 
-The **Plan Route** button (**Alt+P**) lets you plan your ground operations ahead of time without immediately starting steering tones or cluttering your cockpit flow at critical moments:
+The **Plan Route** button (**Alt+Q**) lets you plan your ground operations ahead of time without immediately starting steering tones or cluttering your cockpit flow at critical moments:
 
 ### Departure Planning (at the gate) {#taxi-departure-planning}
-Before engine start, select your departure runway in Destination (**Alt+E**) and press **Plan Route** (**Alt+P**):
+Before engine start, select your departure runway in Destination (**Alt+E**) and press **Plan Route** (**Alt+Q**):
 - **Stand recognition**: BA automatically identifies your current parking stand and coordinates.
 - **Pushback instructions**: BA calculates the recommended pushback direction (*nose right / tail left*, *nose left / tail right*, straight, or direct taxi-out) based on gate orientation and the first taxiway.
 - **Target alignment heading**: The briefing provides the approximate magnetic heading to align the nose onto after pushback.
@@ -539,7 +540,7 @@ Before engine start, select your departure runway in Destination (**Alt+E**) and
 ### Arrival Planning (on approach or before descent) {#taxi-arrival-planning}
 Select **Gate / Parking** in Destination type (**Alt+T**):
 - **Auto-Select Best Gate (Alt+B)**: Press this button to have BA automatically pick the best stand for your aircraft, taking into account wingspan fit, airline callsign matching, and shortest taxi distance.
-- **Runway Exits & Route**: Press **Plan Route** (**Alt+P**) to preview recommended runway exits and the shortest taxi route from the exit to your gate.
+- **Runway Exits & Route**: Press **Plan Route** (**Alt+Q**) to preview recommended runway exits and the shortest taxi route from the exit to your gate.
 - **Seamless guidance off the runway**: When you vacate the runway after landing, guidance to your chosen gate continues automatically without requiring you to stop on a high-speed exit or open the planner mid-taxi.
 - **Dynamic Exit Synchronization**: If you change your intended runway exit in the Landing Exit Planner (**Shift+X**), the arrival taxi route updates dynamically to start from the newly selected exit.
 

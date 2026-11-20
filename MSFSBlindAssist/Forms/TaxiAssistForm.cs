@@ -1074,12 +1074,12 @@ public class TaxiAssistForm : Form
         // Plan Route button
         btnPlanRoute = new Button
         {
-            Text = "&Plan Route",
+            Text = "Plan Route (&Q)",
             Location = new System.Drawing.Point(controlX, y),
             Width = controlWidth,
             Height = 30,
             AccessibleName = "Plan Route",
-            AccessibleDescription = "Plan the taxi route with pushback or arrival briefing and arm automatic guidance activation"
+            AccessibleDescription = "Plan the taxi route with pushback or arrival briefing and arm automatic guidance activation (Alt+Q)"
         };
         btnPlanRoute.Click += OnPlanRouteClicked;
         y += 35;
@@ -4862,6 +4862,43 @@ public class TaxiAssistForm : Form
                 if (hp.Entry != null && hp.Entry.HoldNodeId > 0)
                 {
                     destNodeId = hp.Entry.HoldNodeId;
+                }
+            }
+            else if (!chkIntersection.Checked)
+            {
+                var fullLength = ResolveHoldingPointsForRunway(destLabel)
+                    .Where(r => !r.Partway)
+                    .ToList();
+                if (fullLength.Count == 0)
+                {
+                    string? entrance = ResolveFullLengthEntranceName(destLabel);
+                    if (!string.IsNullOrEmpty(entrance))
+                    {
+                        holdingPointName = entrance;
+                    }
+                }
+                else
+                {
+                    var normal = fullLength.FirstOrDefault(
+                        r => string.Equals(r.Kind.Trim(), "runway", StringComparison.OrdinalIgnoreCase));
+                    if (normal.Entry == null) normal = fullLength[0];
+
+                    if (normal.Entry?.TaxiwayName is { Length: > 0 } hpName)
+                    {
+                        holdingPointName = hpName;
+                        if (normal.Entry.HoldNodeId > 0)
+                        {
+                            destNodeId = normal.Entry.HoldNodeId;
+                        }
+                    }
+                    else
+                    {
+                        string? entrance = ResolveFullLengthEntranceName(destLabel);
+                        if (!string.IsNullOrEmpty(entrance))
+                        {
+                            holdingPointName = entrance;
+                        }
+                    }
                 }
             }
 
