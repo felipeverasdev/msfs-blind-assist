@@ -149,6 +149,7 @@ public static class TaxiRoutePlannerService
             Spot = spot,
             Pushback = pushback,
             Route = route,
+            DestinationNodeId = destinationNodeId,
             HoldingPointName = !string.IsNullOrWhiteSpace(holdingPointName) ? holdingPointName : holdPoint,
             TargetHeadingMag = pushback.PostPushbackHeadingMag,
             OriginLat = aircraftLat,

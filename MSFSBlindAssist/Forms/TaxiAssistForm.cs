@@ -4924,7 +4924,7 @@ public class TaxiAssistForm : Form
                 return;
             }
 
-            _guidanceManager.ArmDeparturePlan(plan);
+            _guidanceManager.ArmDeparturePlan(plan, _graph, _dataProvider);
             txtRouteSummary.Text = plan.Summary;
             lblStatus.Text = "Departure route planned. Guidance will auto-start after pushback.";
 
@@ -4996,7 +4996,7 @@ public class TaxiAssistForm : Form
                 return;
             }
 
-            MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArmArrival(plan);
+            _guidanceManager.ArmArrivalPlan(plan, _graph, _dataProvider);
             txtRouteSummary.Text = plan.Summary;
             lblStatus.Text = "Arrival route planned. Guidance will auto-start when vacating runway.";
 

@@ -16,6 +16,7 @@ public sealed record PlannedDeparturePlan
     public ParkingSpot? Spot { get; init; }
     public required PushbackPlan Pushback { get; init; }
     public required TaxiRoute Route { get; init; }
+    public int DestinationNodeId { get; init; }
     public string HoldingPointName { get; init; } = "";
     public double TargetHeadingMag { get; init; }
     public double OriginLat { get; init; }

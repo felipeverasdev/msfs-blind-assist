@@ -236,6 +236,10 @@ public partial class TaxiGuidanceManager : IDisposable
 
     // Retained for recalculation
     private IAirportDataProvider? _dataProvider;
+    private TaxiGraph? _armedDepartureGraph;
+    private IAirportDataProvider? _armedDepartureProvider;
+    private TaxiGraph? _armedArrivalGraph;
+    private IAirportDataProvider? _armedArrivalProvider;
     private int _destinationNodeId;
     private string _destinationName = "";
     private string _icao = "";
@@ -4496,25 +4500,34 @@ public partial class TaxiGuidanceManager : IDisposable
             }
             else if (_landingExitOffPavement)
             {
+                var arrivalGraph = _armedArrivalGraph ?? _graph;
+                var arrivalProvider = _armedArrivalProvider ?? _dataProvider;
+                string arrIcao = !string.IsNullOrEmpty(_icao)
+                    ? _icao
+                    : (MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArrivalPlan?.AirportIcao ?? "");
+
                 if (MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.HasArmedArrival
                     && MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArrivalPlan is { } arrPlan
-                    && _graph != null && _dataProvider != null && !string.IsNullOrEmpty(_icao))
+                    && arrivalGraph != null && arrivalProvider != null && !string.IsNullOrEmpty(arrIcao))
                 {
-                    int startNodeId = _graph.FindNearestNode(_lastLat, _lastLon, excludeBridgeOnlyStandStubs: true)?.NodeId ?? -1;
-                    var gateNode = _graph.FindNearestNode(arrPlan.DestinationGate.Latitude, arrPlan.DestinationGate.Longitude);
+                    int startNodeId = arrivalGraph.FindNearestNode(_lastLat, _lastLon, excludeBridgeOnlyStandStubs: true)?.NodeId ?? -1;
+                    var gateNode = arrivalGraph.FindNearestNode(arrPlan.DestinationGate.Latitude, arrPlan.DestinationGate.Longitude);
                     if (startNodeId >= 0 && gateNode != null)
                     {
                         string gateName = arrPlan.DestinationGate.DescribeIdentity();
                         string? error = LoadRoute(
-                            _dataProvider, _icao,
+                            arrivalProvider, arrIcao,
                             _lastLat, _lastLon, _lastHeading,
                             gateNode.NodeId, gateName,
                             taxiwaySequence: null,
-                            prebuiltGraph: _graph);
+                            prebuiltGraph: arrivalGraph,
+                            announceSummary: false);
 
                         if (error == null)
                         {
                             MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.DisarmArrival();
+                            _armedArrivalGraph = null;
+                            _armedArrivalProvider = null;
                             StartGuidance(MSFSBlindAssist.Settings.SettingsManager.Current);
                             string viaTaxiways = _route?.TaxiwaySequence.Count > 0
                                 ? $" via {string.Join(", ", _route.TaxiwaySequence)}"
@@ -4851,32 +4864,55 @@ public partial class TaxiGuidanceManager : IDisposable
 
         if (!complete) return false;
 
-        MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.DisarmDeparture();
+        var graph = _armedDepartureGraph ?? _graph;
+        var dataProvider = _armedDepartureProvider ?? _dataProvider;
+        int destNodeId = plan.DestinationNodeId > 0
+            ? plan.DestinationNodeId
+            : (plan.Route.Segments.Count > 0 ? plan.Route.Segments[^1].ToNode.NodeId : -1);
 
-        int destNodeId = plan.Route.Segments.Count > 0
-            ? plan.Route.Segments[^1].ToNode.NodeId
-            : -1;
+        try
+        {
+            _guidanceLog.Info($"[TaxiPlanner] Pushback trigger candidate: complete={complete}, destNodeId={destNodeId}, " +
+                              $"hasGraph={(graph != null)}, hasProvider={(dataProvider != null)}, icao='{plan.AirportIcao}'");
+        }
+        catch { }
 
-        if (_graph != null && _dataProvider != null && destNodeId >= 0 && !string.IsNullOrEmpty(plan.AirportIcao))
+        if (graph != null && dataProvider != null && destNodeId >= 0 && !string.IsNullOrEmpty(plan.AirportIcao))
         {
             string destName = $"Runway {plan.RunwayId}";
             string? err = LoadRoute(
-                _dataProvider, plan.AirportIcao,
+                dataProvider, plan.AirportIcao,
                 lat, lon, headingTrue,
                 destNodeId, destName,
                 taxiwaySequence: null,
                 isRunwayDestination: true,
-                prebuiltGraph: _graph,
-                holdingPointName: !string.IsNullOrEmpty(plan.HoldingPointName) ? plan.HoldingPointName : null);
+                prebuiltGraph: graph,
+                announceSummary: false);
 
             if (err == null)
             {
+                MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.DisarmDeparture();
+                _armedDepartureGraph = null;
+                _armedDepartureProvider = null;
                 StartGuidance(MSFSBlindAssist.Settings.SettingsManager.Current);
                 string via = _route?.TaxiwaySequence.Count > 0
                     ? $" via {string.Join(", ", _route.TaxiwaySequence)}"
                     : "";
                 _announcer.AnnounceImmediate($"Pushback complete. Taxi guidance active to runway {plan.RunwayId}{via}.");
+                try
+                {
+                    _guidanceLog.Info($"[TaxiPlanner] Auto-activated departure taxi guidance to runway {plan.RunwayId}");
+                }
+                catch { }
                 return true;
+            }
+            else
+            {
+                try
+                {
+                    _guidanceLog.Info($"[TaxiPlanner] LoadRoute failed on pushback trigger: {err}");
+                }
+                catch { }
             }
         }
 
@@ -4886,10 +4922,34 @@ public partial class TaxiGuidanceManager : IDisposable
     /// <summary>
     /// Arms a planned departure and starts position stream monitoring for pushback completion.
     /// </summary>
-    public void ArmDeparturePlan(MSFSBlindAssist.Navigation.Planning.PlannedDeparturePlan plan)
+    public void ArmDeparturePlan(
+        MSFSBlindAssist.Navigation.Planning.PlannedDeparturePlan plan,
+        TaxiGraph? graph = null,
+        IAirportDataProvider? dataProvider = null)
     {
+        _armedDepartureGraph = graph ?? _graph;
+        _armedDepartureProvider = dataProvider ?? _dataProvider;
+        if (graph != null) _graph = graph;
+        if (dataProvider != null) _dataProvider = dataProvider;
+        _icao = plan.AirportIcao;
         MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArmDeparture(plan);
         PositionStreamRequired?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Arms a planned arrival and retains graph and provider for post-vacate auto-activation.
+    /// </summary>
+    public void ArmArrivalPlan(
+        MSFSBlindAssist.Navigation.Planning.PlannedArrivalPlan plan,
+        TaxiGraph? graph = null,
+        IAirportDataProvider? dataProvider = null)
+    {
+        _armedArrivalGraph = graph ?? _graph;
+        _armedArrivalProvider = dataProvider ?? _dataProvider;
+        if (graph != null) _graph = graph;
+        if (dataProvider != null) _dataProvider = dataProvider;
+        _icao = plan.AirportIcao;
+        MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.ArmArrival(plan);
     }
 
     public void Dispose()

@@ -1,8 +1,11 @@
 // tests/MSFSBlindAssist.Tests/TaxiRoutePlannerServiceTests.cs
 using System.Collections.Generic;
+using MSFSBlindAssist.Accessibility;
+using MSFSBlindAssist.Database;
 using MSFSBlindAssist.Database.Models;
 using MSFSBlindAssist.Navigation;
 using MSFSBlindAssist.Navigation.Planning;
+using MSFSBlindAssist.Services;
 using Xunit;
 
 namespace MSFSBlindAssist.Tests;
@@ -334,6 +337,78 @@ public class TaxiRoutePlannerServiceTests
         // Fallback uses the last taxiway segment ("B") to name the entrance
         Assert.Contains("Holding point: B (Runway 10 entrance)", plan!.Summary);
         Assert.Contains("Taxi route: B", plan.Summary);
+    }
+
+    [Fact]
+    public void ArmDeparturePlan_RetainsGraphAndProvider_AndAutoActivatesOnPushbackTrigger()
+    {
+        var graph = CreateSampleGraph();
+        var provider = new FakeAirportDataProvider();
+        var announcer = new ScreenReaderAnnouncer(System.IntPtr.Zero);
+        using var manager = new TaxiGuidanceManager(announcer);
+
+        var spot = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Heading = 90.0,
+            Radius = 25.0,
+            Type = 9
+        };
+
+        var plan = TaxiRoutePlannerService.PlanDeparture(
+            icao: "SBBR",
+            runwayId: "11R",
+            aircraftLat: -15.8690,
+            aircraftLon: -47.9200,
+            magVar: -20.0,
+            graph: graph,
+            spots: new[] { spot },
+            destinationNodeId: 3,
+            holdingPointName: "B1");
+
+        Assert.NotNull(plan);
+        Assert.Equal(3, plan!.DestinationNodeId);
+        manager.ArmDeparturePlan(plan, graph, provider);
+
+        Assert.True(TaxiPlannedRouteState.Instance.HasArmedDeparture);
+
+        // Before pushback finishes (still at origin gate, < 15m)
+        bool firedTooEarly = manager.CheckDeparturePushbackTrigger(
+            lat: -15.8690, lon: -47.9200, headingMag: plan.TargetHeadingMag,
+            headingTrue: plan.TargetHeadingMag - 20.0, groundSpeedKts: 0.0);
+        Assert.False(firedTooEarly);
+        Assert.True(TaxiPlannedRouteState.Instance.HasArmedDeparture);
+
+        // Pushback finishes (aircraft moved ~100m onto taxiway, stopped, aligned with target heading +-45)
+        bool fired = manager.CheckDeparturePushbackTrigger(
+            lat: -15.8690, lon: -47.9210, headingMag: plan.TargetHeadingMag,
+            headingTrue: plan.TargetHeadingMag - 20.0, groundSpeedKts: 0.0);
+
+        Assert.True(fired);
+        Assert.False(TaxiPlannedRouteState.Instance.HasArmedDeparture);
+        Assert.Equal(TaxiGuidanceState.Taxiing, manager.State);
+    }
+
+    private sealed class FakeAirportDataProvider : IAirportDataProvider
+    {
+        public bool DatabaseExists => true;
+        public string DatabaseType => "Fake";
+        public string DatabasePath => string.Empty;
+        public Airport? GetAirport(string icao) => new Airport { ICAO = icao, MagVar = -20.0 };
+        public List<Runway> GetRunways(string icao) => new() { new Runway { RunwayID = "11R", Heading = 110.0 } };
+        public ILSData? GetILSForRunway(string icao, string runwayName) => null;
+        public List<ParkingSpot> GetParkingSpots(string icao) => new();
+        public bool AirportExists(string icao) => true;
+        public int GetAirportCount() => 1;
+        public int GetRunwayCount() => 1;
+        public int GetParkingSpotCount() => 0;
+        public HashSet<string> GetAllAirportICAOs() => new() { "SBBR", "SBGL" };
+        public List<string> GetNearbyAirportICAOs(double latitude, double longitude, double radiusNm) => new();
+        public List<TaxiPath> GetTaxiPaths(string icao) => new();
+        public List<StartPosition> GetRunwayStarts(string icao) => new();
     }
 }
 
