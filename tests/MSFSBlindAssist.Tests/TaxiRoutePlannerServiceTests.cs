@@ -1,0 +1,277 @@
+// tests/MSFSBlindAssist.Tests/TaxiRoutePlannerServiceTests.cs
+using System.Collections.Generic;
+using MSFSBlindAssist.Database.Models;
+using MSFSBlindAssist.Navigation;
+using MSFSBlindAssist.Navigation.Planning;
+using Xunit;
+
+namespace MSFSBlindAssist.Tests;
+
+public class TaxiRoutePlannerServiceTests
+{
+    private static TaxiGraph CreateSampleGraph()
+    {
+        var g = new TaxiGraph();
+
+        // Node 1: Stand position (Gate B12)
+        g.Nodes[1] = new TaxiNode
+        {
+            NodeId = 1,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            ComponentId = 0,
+            Type = TaxiNodeType.Parking,
+            ParkingName = "Gate B12"
+        };
+
+        // Node 2: Taxilane entry
+        g.Nodes[2] = new TaxiNode
+        {
+            NodeId = 2,
+            Latitude = -15.8690,
+            Longitude = -47.9210,
+            ComponentId = 0
+        };
+
+        // Node 3: Runway holding point / entrance
+        g.Nodes[3] = new TaxiNode
+        {
+            NodeId = 3,
+            Latitude = -15.8690,
+            Longitude = -47.9250,
+            ComponentId = 0
+        };
+
+        g.Adjacency[1] = new List<TaxiEdge>
+        {
+            new() { FromNodeId = 1, ToNodeId = 2, DistanceMeters = 100.0, TaxiwayName = "B" }
+        };
+        g.Adjacency[2] = new List<TaxiEdge>
+        {
+            new() { FromNodeId = 2, ToNodeId = 1, DistanceMeters = 100.0, TaxiwayName = "B" },
+            new() { FromNodeId = 2, ToNodeId = 3, DistanceMeters = 400.0, TaxiwayName = "B" }
+        };
+        g.Adjacency[3] = new List<TaxiEdge>
+        {
+            new() { FromNodeId = 3, ToNodeId = 2, DistanceMeters = 400.0, TaxiwayName = "B" }
+        };
+
+        return g;
+    }
+
+    [Fact]
+    public void FindCurrentParkingSpot_FindsClosestSpotWithinRadius()
+    {
+        var spot1 = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Radius = 25.0
+        };
+
+        var spot2 = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 20,
+            Latitude = -15.8800,
+            Longitude = -47.9200,
+            Radius = 25.0
+        };
+
+        // Aircraft coordinates ~10m from spot 1
+        var spot = TaxiRoutePlannerService.FindCurrentParkingSpot(
+            -15.86908, -47.9200, new[] { spot2, spot1 });
+
+        Assert.NotNull(spot);
+        Assert.Equal(12, spot!.Number);
+    }
+
+    [Fact]
+    public void FindCurrentParkingSpot_ReturnsNull_WhenTooFar()
+    {
+        var spot = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Radius = 20.0
+        };
+
+        // Aircraft 2 km away
+        var result = TaxiRoutePlannerService.FindCurrentParkingSpot(
+            -15.8890, -47.9200, new[] { spot });
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void PlanDeparture_BuildsFullDeparturePlanAndPushback()
+    {
+        var graph = CreateSampleGraph();
+
+        var spot = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Heading = 90.0,
+            Radius = 25.0,
+            Type = 9
+        };
+
+        var plan = TaxiRoutePlannerService.PlanDeparture(
+            icao: "SBBR",
+            runwayId: "11R",
+            aircraftLat: -15.8690,
+            aircraftLon: -47.9200,
+            magVar: -20.0,
+            graph: graph,
+            spots: new[] { spot },
+            destinationNodeId: 3,
+            holdingPointName: "Holding Point B1");
+
+        Assert.NotNull(plan);
+        Assert.Equal("SBBR", plan!.AirportIcao);
+        Assert.Equal("11R", plan.RunwayId);
+        Assert.True(plan.IsArmed);
+        Assert.NotNull(plan.Pushback);
+        Assert.Equal("Holding Point B1", plan.HoldingPointName);
+        Assert.Contains("Departure taxi plan for Runway 11R at SBBR", plan.Summary);
+        Assert.Contains("Gate 12", plan.Summary);
+        Assert.Contains("Holding Point B1", plan.Summary);
+    }
+
+    [Fact]
+    public void PlanArrival_BuildsArrivalPlanAndSynchronizesWithPreferredExit()
+    {
+        var graph = CreateSampleGraph();
+
+        var gate = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Type = 9
+        };
+
+        var exit = new LandingExit
+        {
+            TaxiwayName = "B",
+            NodeId = 3,
+            ApronNodeId = 3,
+            DistanceFromThresholdFeet = 2500.0
+        };
+
+        var plan = TaxiRoutePlannerService.PlanArrival(
+            icao: "SBBR",
+            runwayId: "11R",
+            runway: null,
+            graph: graph,
+            gate: gate,
+            preferredExit: exit,
+            availableExits: new[] { exit });
+
+        Assert.NotNull(plan);
+        Assert.Equal("SBBR", plan!.AirportIcao);
+        Assert.Equal("11R", plan.RunwayId);
+        Assert.Equal(exit, plan.SelectedExit);
+        Assert.True(plan.IsArmed);
+        Assert.Contains("Arrival taxi plan for Gate 12 at SBBR", plan.Summary);
+        Assert.Contains("Recommended exit: B", plan.Summary);
+    }
+
+    [Fact]
+    public void TaxiPlannedRouteState_ManagesArmedStateCorrectly()
+    {
+        var state = TaxiPlannedRouteState.Instance;
+        state.ClearDeparture();
+        state.ClearArrival();
+
+        Assert.False(state.HasArmedDeparture);
+        Assert.False(state.HasArmedArrival);
+
+        var depPlan = new PlannedDeparturePlan
+        {
+            AirportIcao = "SBBR",
+            RunwayId = "11R",
+            Pushback = new PushbackPlan { Direction = PushbackDirection.Straight },
+            Route = new TaxiRoute()
+        };
+
+        state.ArmDeparture(depPlan);
+        Assert.True(state.HasArmedDeparture);
+
+        state.DisarmDeparture();
+        Assert.False(state.HasArmedDeparture);
+
+        var arrPlan = new PlannedArrivalPlan
+        {
+            AirportIcao = "SBBR",
+            RunwayId = "11R",
+            DestinationGate = new ParkingSpot { Name = "Gate", Number = 1 }
+        };
+
+        state.ArmArrival(arrPlan);
+        Assert.True(state.HasArmedArrival);
+
+        state.DisarmArrival();
+        Assert.False(state.HasArmedArrival);
+
+        state.ClearArrival();
+        Assert.Null(state.ArrivalPlan);
+    }
+
+    [Fact]
+    public void TaxiPlannedRouteState_UpdateArrivalExit_RecalculatesRoute()
+    {
+        var graph = CreateSampleGraph();
+        var state = TaxiPlannedRouteState.Instance;
+
+        var gate = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 12,
+            Latitude = -15.8690,
+            Longitude = -47.9200,
+            Type = 9
+        };
+
+        var initialExit = new LandingExit
+        {
+            TaxiwayName = "B",
+            NodeId = 2,
+            ApronNodeId = 2
+        };
+
+        var plan = new PlannedArrivalPlan
+        {
+            AirportIcao = "SBBR",
+            RunwayId = "11R",
+            DestinationGate = gate,
+            SelectedExit = initialExit
+        };
+
+        state.ArmArrival(plan);
+
+        // Pilot changes exit in LandingExitPlanner to Exit Node 3 (e.g. further down the runway)
+        var newExit = new LandingExit
+        {
+            TaxiwayName = "B_Far",
+            NodeId = 3,
+            ApronNodeId = 3
+        };
+
+        state.UpdateArrivalExit(newExit, graph);
+
+        Assert.Equal(newExit, state.ArrivalPlan!.SelectedExit);
+        Assert.NotNull(state.ArrivalPlan.Route);
+        // From Node 3 to Node 1 distance is 400 + 100 = 500m
+        Assert.Equal(500.0, state.ArrivalPlan.TotalDistanceMeters);
+    }
+}
+
