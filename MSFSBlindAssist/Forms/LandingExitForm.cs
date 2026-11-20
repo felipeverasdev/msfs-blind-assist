@@ -59,12 +59,46 @@ public class LandingExitForm : Form
     private TextBox txtAirport = null!;
     private Label lblRunway = null!;
     private ComboBox cmbRunway = null!;
+    private CheckBox chkPlanTaxiRoute = null!;
+    private Label lblGate = null!;
+    private ComboBox cmbGate = null!;
+    private Button btnAutoSelectGate = null!;
     private Label lblExit = null!;
     private ComboBox cmbExit = null!;
     private CheckBox chkLahso = null!;
     // The landing runway the LAHSO list was last built for: a pick survives a rebuild only for it.
     private string? _lahsoListRunwayId;
     private ComboBox cmbLahsoRunway = null!;
+
+    private sealed class GateChoice
+    {
+        public ParkingSpot Spot { get; }
+        public GateChoice(ParkingSpot s) { Spot = s; }
+        public override string ToString() => $"{Spot.DescribeIdentity()} ({Spot.Describe()})";
+    }
+
+    private sealed class LandingExitChoice
+    {
+        public LandingExit Exit { get; }
+        public string Recommendation { get; }
+        public LandingExitChoice(LandingExit exit, string recommendation = "")
+        {
+            Exit = exit;
+            Recommendation = recommendation;
+        }
+        public override string ToString()
+        {
+            string baseStr = Exit.ToString();
+            if (string.IsNullOrEmpty(Recommendation)) return baseStr;
+            string name = string.IsNullOrEmpty(Exit.TaxiwayName) ? "(unnamed)" : Exit.TaxiwayName;
+            int idx = baseStr.IndexOf(" — ");
+            if (idx >= 0)
+            {
+                return $"{name} {Recommendation}{baseStr.Substring(idx)}";
+            }
+            return $"{baseStr} {Recommendation}";
+        }
+    }
 
     /// <summary>Combo wrapper: a computed LAHSO hold with a speakable label.</summary>
     private sealed class LahsoChoice
@@ -77,6 +111,11 @@ public class LandingExitForm : Form
     private Button btnPlan = null!;
     private Button btnClear = null!;
     private Label lblStatus = null!;
+
+    private readonly Services.TaxiGuidanceManager? _guidanceManager;
+    private readonly Action? _showTaxiGuidanceAction;
+    private List<ParkingSpot> _gateSpots = new();
+    private ParkingSpot? _selectedGate;
 
     private string _currentIcao = "";
     private TaxiGraph? _graph;
@@ -112,13 +151,17 @@ public class LandingExitForm : Form
         string? presetIcao,
         string? presetRunwayId,
         SimConnectManager? simConnectManager = null,
-        Services.GateDataSource? gateSource = null)
+        Services.GateDataSource? gateSource = null,
+        Services.TaxiGuidanceManager? guidanceManager = null,
+        Action? showTaxiGuidanceAction = null)
     {
         _dataProvider = dataProvider;
         _announcer = announcer;
         _planner = planner;
         _simConnectManager = simConnectManager;
         _gateSource = gateSource;
+        _guidanceManager = guidanceManager;
+        _showTaxiGuidanceAction = showTaxiGuidanceAction;
         _presetIcao = presetIcao;
         _presetRunwayId = presetRunwayId;
         _augProvider = dataProvider as Services.TaxiAugment.AugmentingAirportDataProvider;
@@ -196,6 +239,70 @@ public class LandingExitForm : Form
         };
         cmbRunway.SelectedIndexChanged += (s, e) => RepopulateExits();
         y += 30;
+
+        chkPlanTaxiRoute = new CheckBox
+        {
+            Text = "Plan taxi &route to gate",
+            Location = new System.Drawing.Point(labelX, y),
+            AutoSize = true,
+            AccessibleName = "Plan taxi route to gate",
+            AccessibleDescription = "When checked, lets you pick a destination gate, shows exit recommendations, and auto-arms gate taxi guidance upon vacating the runway."
+        };
+        chkPlanTaxiRoute.CheckedChanged += (s, e) =>
+        {
+            if (chkPlanTaxiRoute.Checked && cmbGate.Items.Count == 0)
+            {
+                PopulateGates();
+            }
+            UpdateLayout();
+            RepopulateExits(announce: false);
+        };
+        y += 28;
+
+        lblGate = new Label
+        {
+            Text = "&Gate / Parking:",
+            Location = new System.Drawing.Point(labelX, y),
+            AutoSize = true,
+            Visible = false,
+            AccessibleName = "Gate or Parking Label"
+        };
+        y += 20;
+        cmbGate = new ComboBox
+        {
+            Location = new System.Drawing.Point(controlX, y),
+            Width = controlWidth,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Visible = false,
+            AccessibleName = "Gate or Parking",
+            AccessibleDescription = "Target parking gate or stand for arrival."
+        };
+        cmbGate.SelectedIndexChanged += (s, e) =>
+        {
+            if (cmbGate.SelectedItem is GateChoice gc)
+            {
+                _selectedGate = gc.Spot;
+            }
+            else
+            {
+                _selectedGate = null;
+            }
+            RepopulateExits(announce: false);
+        };
+        y += 30;
+
+        btnAutoSelectGate = new Button
+        {
+            Text = "Auto-&select best gate",
+            Location = new System.Drawing.Point(controlX, y),
+            Width = 180,
+            Height = 28,
+            Visible = false,
+            AccessibleName = "Auto-select best gate",
+            AccessibleDescription = "Automatically select the most recommended gate or parking stand for your aircraft size and airline."
+        };
+        btnAutoSelectGate.Click += OnAutoSelectGateClicked;
+        y += 35;
 
         lblExit = new Label
         {
@@ -276,6 +383,10 @@ public class LandingExitForm : Form
         this.Controls.Add(txtAirport);
         this.Controls.Add(lblRunway);
         this.Controls.Add(cmbRunway);
+        this.Controls.Add(chkPlanTaxiRoute);
+        this.Controls.Add(lblGate);
+        this.Controls.Add(cmbGate);
+        this.Controls.Add(btnAutoSelectGate);
         this.Controls.Add(lblExit);
         this.Controls.Add(cmbExit);
         this.Controls.Add(chkLahso);
@@ -287,11 +398,17 @@ public class LandingExitForm : Form
         int t = 0;
         txtAirport.TabIndex = t++;
         cmbRunway.TabIndex = t++;
+        chkPlanTaxiRoute.TabIndex = t++;
+        lblGate.TabIndex = t++;
+        cmbGate.TabIndex = t++;
+        btnAutoSelectGate.TabIndex = t++;
         cmbExit.TabIndex = t++;
         chkLahso.TabIndex = t++;
         cmbLahsoRunway.TabIndex = t++;
         btnPlan.TabIndex = t++;
         btnClear.TabIndex = t++;
+
+        UpdateLayout();
 
         this.Load += async (s, e) =>
         {
@@ -490,6 +607,116 @@ public class LandingExitForm : Form
         lblStatus.Text = $"{icao}: {_runways.Count} runway directions loaded.";
 
         SelectPresetRunway(icao);
+        PopulateGates();
+    }
+
+    private void UpdateLayout()
+    {
+        bool showGate = chkPlanTaxiRoute.Checked;
+        lblGate.Visible = showGate;
+        cmbGate.Visible = showGate;
+        btnAutoSelectGate.Visible = showGate;
+
+        int y = 140;
+        chkPlanTaxiRoute.Location = new System.Drawing.Point(15, y);
+        y += 28;
+
+        if (showGate)
+        {
+            lblGate.Location = new System.Drawing.Point(15, y);
+            y += 20;
+            cmbGate.Location = new System.Drawing.Point(15, y);
+            y += 30;
+            btnAutoSelectGate.Location = new System.Drawing.Point(15, y);
+            y += 35;
+        }
+
+        lblExit.Location = new System.Drawing.Point(15, y);
+        y += 20;
+        cmbExit.Location = new System.Drawing.Point(15, y);
+        y += 35;
+
+        chkLahso.Location = new System.Drawing.Point(15, y);
+        y += 25;
+        cmbLahsoRunway.Location = new System.Drawing.Point(15, y);
+        y += 35;
+
+        btnPlan.Location = new System.Drawing.Point(15, y);
+        btnClear.Location = new System.Drawing.Point(205, y);
+        y += 40;
+
+        lblStatus.Location = new System.Drawing.Point(15, y);
+        y += 65;
+
+        this.ClientSize = new System.Drawing.Size(460, y + 15);
+    }
+
+    private void PopulateGates()
+    {
+        cmbGate.Items.Clear();
+        _gateSpots.Clear();
+        _selectedGate = null;
+        if (_graph == null || string.IsNullOrEmpty(_currentIcao) || _dataProvider == null) return;
+
+        var sourceSpots = Services.ParkingSpotSource.GetSelectableGates(_dataProvider, _gateSource, _currentIcao);
+        foreach (var spot in sourceSpots)
+        {
+            _gateSpots.Add(spot);
+            cmbGate.Items.Add(new GateChoice(spot));
+        }
+
+        if (cmbGate.Items.Count > 0)
+        {
+            cmbGate.SelectedIndex = 0;
+            _selectedGate = _gateSpots[0];
+        }
+    }
+
+    private void OnAutoSelectGateClicked(object? sender, EventArgs e)
+    {
+        if (_gateSpots.Count == 0)
+        {
+            _announcer.Announce("No gates found for this airport.");
+            return;
+        }
+
+        double wingspan = _simConnectManager?.AircraftWingSpan ?? 0.0;
+        string? airline = null;
+        if (!string.IsNullOrEmpty(_simConnectManager?.CurrentAircraftAtcId))
+        {
+            string cs = _simConnectManager.CurrentAircraftAtcId.Trim().ToUpperInvariant();
+            if (cs.Length >= 3 && char.IsLetter(cs[0]) && char.IsLetter(cs[1]) && char.IsLetter(cs[2]))
+            {
+                airline = cs.Substring(0, 3);
+            }
+        }
+
+        var best = MSFSBlindAssist.Navigation.Planning.ArrivalGateRecommender.AutoSelectBestGate(
+            _gateSpots, wingspan, airline);
+
+        if (best != null)
+        {
+            int targetIdx = -1;
+            for (int i = 0; i < cmbGate.Items.Count; i++)
+            {
+                if (cmbGate.Items[i] is GateChoice gc && gc.Spot == best)
+                {
+                    targetIdx = i;
+                    break;
+                }
+            }
+
+            if (targetIdx >= 0)
+            {
+                cmbGate.SelectedIndex = targetIdx;
+                cmbGate.Focus();
+                _announcer.Announce($"Selected best gate: {best.DescribeIdentity()}");
+            }
+        }
+        else
+        {
+            _announcer.Announce("No fitting gate found for your aircraft.");
+        }
     }
 
     /// <summary>
@@ -567,11 +794,44 @@ public class LandingExitForm : Form
         _shownExits = Navigation.LandingExitDisplayList.Collapse(_exits);
         int unusable = _shownExits.Count(e => !e.VacatesRunway && !e.NeedsBacktrack);
 
-        foreach (var exit in _shownExits)
-            cmbExit.Items.Add(exit);
+        string preferredSide = "";
+        if (chkPlanTaxiRoute.Checked && _selectedGate != null)
+        {
+            var axis = Navigation.RunwayAxis.For(rwy);
+            var (_, lateralM) = axis.Project(_selectedGate.Latitude, _selectedGate.Longitude);
+            if (lateralM > 5.0) preferredSide = "Right";
+            else if (lateralM < -5.0) preferredSide = "Left";
+        }
 
-        // Never a turnaround (Navigation.LandingExitDefault), then the old "gets clear" preference.
-        cmbExit.SelectedIndex = Math.Max(0, Navigation.LandingExitDefault.Index(_shownExits));
+        int recommendedIndex = -1;
+        for (int i = 0; i < _shownExits.Count; i++)
+        {
+            var exit = _shownExits[i];
+            if (!string.IsNullOrEmpty(preferredSide))
+            {
+                bool isRec = string.Equals(exit.ExitSide, preferredSide, StringComparison.OrdinalIgnoreCase);
+                string recLabel = isRec ? "[recommended]" : "[not recommended]";
+                cmbExit.Items.Add(new LandingExitChoice(exit, recLabel));
+                if (isRec && exit.VacatesRunway && recommendedIndex < 0)
+                {
+                    recommendedIndex = i;
+                }
+            }
+            else
+            {
+                cmbExit.Items.Add(exit);
+            }
+        }
+
+        if (recommendedIndex >= 0)
+        {
+            cmbExit.SelectedIndex = recommendedIndex;
+        }
+        else
+        {
+            // Never a turnaround (Navigation.LandingExitDefault), then the old "gets clear" preference.
+            cmbExit.SelectedIndex = Math.Max(0, Navigation.LandingExitDefault.Index(_shownExits));
+        }
 
         // LAHSO candidates: every runway direction whose centerline actually
         // crosses this landing runway's pavement. Both directions of a crossing
@@ -686,7 +946,7 @@ public class LandingExitForm : Form
                 _graph = rebuilt;
 
                 int before = _shownExits.Count;
-                var selected = cmbExit.SelectedItem as LandingExit;
+                var selected = (cmbExit.SelectedItem as LandingExitChoice)?.Exit ?? cmbExit.SelectedItem as LandingExit;
 
                 RepopulateExits(announce: false);
 
@@ -726,7 +986,8 @@ public class LandingExitForm : Form
             return;
         }
         Runway rwy = choice.Runway;
-        if (cmbExit.SelectedItem is not LandingExit exit)
+        LandingExit? exit = (cmbExit.SelectedItem as LandingExitChoice)?.Exit ?? cmbExit.SelectedItem as LandingExit;
+        if (exit == null)
         {
             _announcer.Announce("Select an exit.");
             return;
@@ -764,6 +1025,31 @@ public class LandingExitForm : Form
         }
 
         _planner.SetExit(_dataProvider, _currentIcao, rwy, exit, _graph, _allRunways, currentlyAirborne, lahso);
+
+        if (chkPlanTaxiRoute.Checked && _selectedGate != null)
+        {
+            var plan = MSFSBlindAssist.Navigation.Planning.TaxiRoutePlannerService.PlanArrival(
+                _currentIcao,
+                rwy.RunwayID,
+                rwy,
+                _graph,
+                _selectedGate,
+                exit,
+                _exits);
+
+            if (plan != null && _guidanceManager != null)
+            {
+                _guidanceManager.ArmArrivalPlan(plan, _graph, _dataProvider);
+            }
+
+            this.Close();
+
+            string popupMsg = $"Arrival taxi route to {_selectedGate.DescribeIdentity()} via {exit.TaxiwayName} has been planned. Guidance will auto-activate when vacating the runway.";
+            var popup = new PlannedRoutePopupForm(popupMsg, _showTaxiGuidanceAction, _announcer);
+            popup.ShowDialog();
+            return;
+        }
+
         lblStatus.Text = $"Plan set: {exit}" + (lahso != null ? $" — LAHSO short of runway {lahso.CrossingRunwayId}" : "");
         this.Close();
     }

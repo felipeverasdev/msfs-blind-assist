@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using MSFSBlindAssist.Accessibility;
 using MSFSBlindAssist.Aircraft;
 using MSFSBlindAssist.Database;
@@ -978,7 +978,7 @@ public partial class MainForm
 
         landingExitForm = new LandingExitForm(
             airportDataProvider, announcer, landingExitPlanner, preset.Icao, preset.RunwayId,
-            simConnectManager, BuildGateDataSource());
+            simConnectManager, BuildGateDataSource(), taxiGuidanceManager, () => ShowTaxiAssistForm());
 
         landingExitForm.Show();
         landingExitForm.BringToFront();
