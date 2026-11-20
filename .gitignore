@@ -187,3 +187,7 @@ __pycache__/
 
 # Antigravity file
 AGENTS.md
+
+# Local developer scripts
+run.ps1
+run.bat
