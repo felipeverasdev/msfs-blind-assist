@@ -107,6 +107,7 @@ Part 5 is about the airport, from the gate to the runway and back: knowing where
    - [SayIntentions Taxi Import](taxi-guidance.md#taxi-sayintentions)
    - [Progressive Taxi](taxi-guidance.md#taxi-progressive)
    - [Calculating the Route](taxi-guidance.md#taxi-calculating)
+   - [Planning Routes in Advance (Taxi Route Planner)](taxi-guidance.md#taxi-route-planner)
    - [Starting Guidance](taxi-guidance.md#taxi-starting)
    - [The Steering Tone](taxi-guidance.md#taxi-tone)
    - [Following the Guidance](taxi-guidance.md#taxi-following)

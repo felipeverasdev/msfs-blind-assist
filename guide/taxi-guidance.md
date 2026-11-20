@@ -524,6 +524,27 @@ If Calculate fails, BA tells you why and puts the same reason in the summary box
 - *"Gate list updated from GSX. Please choose the destination again."* GSX finished loading and the stand list changed. Choose your stand again and recalculate.
 - *"No taxi path data available for this airport."*, *"Could not find a nearby taxiway node."* or *"Could not calculate a route to the destination."* Usually missing or broken taxiway data in the scenery.
 
+## Planning Routes in Advance (Taxi Route Planner) {#taxi-route-planner}
+
+The **Plan Route** button (**Alt+P**) lets you plan your ground operations ahead of time without immediately starting steering tones or cluttering your cockpit flow at critical moments:
+
+### Departure Planning (at the gate) {#taxi-departure-planning}
+Before engine start, select your departure runway in Destination (**Alt+E**) and press **Plan Route** (**Alt+P**):
+- **Stand recognition**: BA automatically identifies your current parking stand and coordinates.
+- **Pushback instructions**: BA calculates the recommended pushback direction (*nose right / tail left*, *nose left / tail right*, straight, or direct taxi-out) based on gate orientation and the first taxiway.
+- **Target alignment heading**: The briefing provides the approximate magnetic heading to align the nose onto after pushback.
+- **Full briefing in Route Summary**: The complete sequence of taxiways and the runway holding point name are written to the read-only **Last route summary** box (**Tab**), fully navigable with arrow keys using your screen reader.
+- **Automatic guidance after pushback**: Guidance tones remain quiet during pushback. Once you move away from the stand (>15 metres), come to a stop or set the parking brake, and face within $\pm 45^\circ$ of the target heading, BA automatically announces pushback completion and starts steering guidance to the runway holding point.
+
+### Arrival Planning (on approach or before descent) {#taxi-arrival-planning}
+Select **Gate / Parking** in Destination type (**Alt+T**):
+- **Auto-Select Best Gate (Alt+B)**: Press this button to have BA automatically pick the best stand for your aircraft, taking into account wingspan fit, airline callsign matching, and shortest taxi distance.
+- **Runway Exits & Route**: Press **Plan Route** (**Alt+P**) to preview recommended runway exits and the shortest taxi route from the exit to your gate.
+- **Seamless guidance off the runway**: When you vacate the runway after landing, guidance to your chosen gate continues automatically without requiring you to stop on a high-speed exit or open the planner mid-taxi.
+- **Dynamic Exit Synchronization**: If you change your intended runway exit in the Landing Exit Planner (**Shift+X**), the arrival taxi route updates dynamically to start from the newly selected exit.
+
+> If you prefer traditional manual routing (for instance on VATSIM or IVAO where ground routing is assigned by ATC after landing or before push), the classic **Calculate Route** button (**Alt+C**) remains unchanged and available at any time.
+
 ## Starting Guidance {#taxi-starting}
 
 Guidance starts as soon as the route is calculated. You do not need to press anything else. The status line says *"Route loaded. Guidance active."*
