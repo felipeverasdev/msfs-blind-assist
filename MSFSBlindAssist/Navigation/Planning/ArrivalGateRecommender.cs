@@ -114,6 +114,21 @@ public static class ArrivalGateRecommender
         return recommended.FirstOrDefault()?.Spot;
     }
 
+    /// <summary>
+    /// Convenience overload to automatically select the single best parking gate available by wingspan in meters.
+    /// </summary>
+    public static ParkingSpot? AutoSelectBestGate(
+        IReadOnlyList<ParkingSpot>? spots,
+        double wingspanMeters,
+        string? airlineIcao = null,
+        double? originLat = null,
+        double? originLon = null)
+    {
+        var letter = wingspanMeters > 0 ? AircraftSizeClass.LetterForWingspan(wingspanMeters) : IcaoCodeLetter.Unknown;
+        var profile = new AircraftProfile("", "Aircraft", wingspanMeters > 0 ? wingspanMeters : null, letter, false, 0.0);
+        return AutoSelectBestGate(spots, profile, airlineIcao, originLat, originLon);
+    }
+
     private static bool IsExcluded(ParkingSpot spot)
     {
         return spot.IsDeiceArea

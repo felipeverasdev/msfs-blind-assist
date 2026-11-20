@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using MSFSBlindAssist.Accessibility;
 using MSFSBlindAssist.Aircraft;
 using MSFSBlindAssist.Database;
@@ -1225,6 +1225,11 @@ public partial class MainForm : Form
         if (_rolloutCueExitPlan != null)
             _rolloutCueLatest = MSFSBlindAssist.Navigation.RolloutCueSource.ExitPlan;
         RefreshRolloutCueArming();
+
+        if (landingExitPlanner.HasPendingExit && landingExitPlanner.PendingExit is { } exit)
+        {
+            MSFSBlindAssist.Navigation.Planning.TaxiPlannedRouteState.Instance.UpdateArrivalExit(exit, landingExitPlanner.PendingGraph);
+        }
     }
 
     /// <summary>

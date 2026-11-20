@@ -83,6 +83,7 @@ public class LandingExitPlanner
     public string? PendingIcao => _icao;
     public Runway? PendingRunway => _runway;
     public LandingExit? PendingExit => _exit;
+    public TaxiGraph? PendingGraph => _graph;
 
     /// <summary>Every runway end at the planned airport, captured with the plan (empty with none).</summary>
     public IReadOnlyList<Runway> PendingAirportRunways => _airportRunways;
