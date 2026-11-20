@@ -4886,14 +4886,27 @@ public partial class TaxiGuidanceManager : IDisposable
 
         if (graph != null && dataProvider != null && destNodeId >= 0 && !string.IsNullOrEmpty(plan.AirportIcao))
         {
-            string destName = $"Runway {plan.RunwayId}";
+            string destName = !string.IsNullOrEmpty(plan.DestinationName) ? plan.DestinationName : $"Runway {plan.RunwayId}";
             string? err = LoadRoute(
-                dataProvider, plan.AirportIcao,
-                lat, lon, headingTrue,
-                destNodeId, destName,
-                taxiwaySequence: null,
+                dataProvider: dataProvider,
+                icao: plan.AirportIcao,
+                aircraftLat: lat,
+                aircraftLon: lon,
+                aircraftHeading: headingTrue,
+                destinationNodeId: destNodeId,
+                destinationName: destName,
+                taxiwaySequence: plan.TaxiwaySequence,
+                destinationHeading: plan.DestinationHeading,
+                destinationThresholdLat: plan.ThresholdLat,
+                destinationThresholdLon: plan.ThresholdLon,
+                destinationHeadingTrue: plan.DestinationHeadingTrue,
                 isRunwayDestination: true,
                 prebuiltGraph: graph,
+                preferIlsHold: plan.PreferIlsHold,
+                fullLengthBacktrack: plan.FullLengthBacktrack,
+                holdingPointHoldNodeId: plan.HoldingPointHoldNodeId,
+                holdingPointName: !string.IsNullOrEmpty(plan.HoldingPointName) ? plan.HoldingPointName : null,
+                intersectionDeparture: plan.IntersectionDeparture,
                 announceSummary: false);
 
             if (err == null)

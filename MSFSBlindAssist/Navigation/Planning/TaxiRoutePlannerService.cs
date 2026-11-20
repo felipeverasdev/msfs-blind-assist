@@ -94,53 +94,8 @@ public static class TaxiRoutePlannerService
             ? runwayId.Substring(7).Trim()
             : runwayId.Trim();
 
-        string posDesc = spot != null
-            ? DescribeSpotWithTerminal(spot, icao)
-            : "Current airport position";
-
-        string holdPoint;
-        if (!string.IsNullOrWhiteSpace(holdingPointName))
-        {
-            string cleanHp = holdingPointName.Trim();
-            if (cleanHp.StartsWith("Holding point ", StringComparison.OrdinalIgnoreCase))
-            {
-                cleanHp = cleanHp["Holding point ".Length..].Trim();
-            }
-
-            if (cleanHp.Contains("entrance", StringComparison.OrdinalIgnoreCase) || cleanHp.Contains("runway", StringComparison.OrdinalIgnoreCase))
-            {
-                holdPoint = cleanHp;
-            }
-            else
-            {
-                holdPoint = $"{cleanHp} (Runway {cleanRwy} entrance)";
-            }
-        }
-        else if (taxiwayNames.Count > 0)
-        {
-            holdPoint = $"{taxiwayNames[^1]} (Runway {cleanRwy} entrance)";
-        }
-        else
-        {
-            holdPoint = $"Runway {cleanRwy} entrance";
-        }
-
-        string taxiwayList = taxiwayNames.Count > 0
-            ? string.Join(", ", taxiwayNames)
-            : "(direct onto runway)";
-
-        string distStr = FormatDistance(route.TotalDistanceMeters);
-
-        var lines = new List<string>
-        {
-            $"Departure taxi plan for Runway {cleanRwy} at {icao}:",
-            $"Current position: {posDesc}.",
-            pushback.Summary,
-            $"Taxi route: {taxiwayList} ({distStr}).",
-            $"Holding point: {holdPoint}."
-        };
-
-        string summary = string.Join("\r\n", lines);
+        string holdPoint = ResolveHoldingPointDisplayName(holdingPointName, cleanRwy, taxiwayNames);
+        string summary = FormatDepartureSummary(icao, cleanRwy, spot, pushback, route, holdPoint);
 
         return new PlannedDeparturePlan
         {
@@ -150,6 +105,7 @@ public static class TaxiRoutePlannerService
             Pushback = pushback,
             Route = route,
             DestinationNodeId = destinationNodeId,
+            DestinationName = $"Runway {cleanRwy}",
             HoldingPointName = !string.IsNullOrWhiteSpace(holdingPointName) ? holdingPointName : holdPoint,
             TargetHeadingMag = pushback.PostPushbackHeadingMag,
             OriginLat = aircraftLat,
@@ -338,6 +294,77 @@ public static class TaxiRoutePlannerService
         return !string.IsNullOrEmpty(details)
             ? $"{identity} ({details})"
             : identity;
+    }
+
+    /// <summary>
+    /// Formats a human-readable departure taxi plan summary for screen readers.
+    /// </summary>
+    public static string FormatDepartureSummary(
+        string icao,
+        string cleanRwy,
+        ParkingSpot? spot,
+        PushbackPlan pushback,
+        TaxiRoute route,
+        string? holdingPointName)
+    {
+        string posDesc = spot != null
+            ? DescribeSpotWithTerminal(spot, icao)
+            : "Current airport position";
+
+        var taxiwayNames = route.TaxiwaySequence != null && route.TaxiwaySequence.Count > 0
+            ? route.TaxiwaySequence
+            : RouteTaxiwaySequence.DistinctConsecutive(route.Segments);
+
+        string holdPoint = ResolveHoldingPointDisplayName(holdingPointName, cleanRwy, taxiwayNames);
+
+        string taxiwayList = taxiwayNames.Count > 0
+            ? string.Join(", ", taxiwayNames)
+            : "(direct onto runway)";
+
+        string distStr = FormatDistance(route.TotalDistanceMeters);
+
+        var lines = new List<string>
+        {
+            $"Departure taxi plan for Runway {cleanRwy} at {icao}:",
+            $"Current position: {posDesc}.",
+            pushback.Summary,
+            $"Taxi route: {taxiwayList} ({distStr}).",
+            $"Holding point: {holdPoint}."
+        };
+
+        return string.Join("\r\n", lines);
+    }
+
+    /// <summary>
+    /// Resolves the human-readable holding point name with runway entrance context.
+    /// </summary>
+    public static string ResolveHoldingPointDisplayName(
+        string? holdingPointName,
+        string cleanRwy,
+        IReadOnlyList<string>? taxiwayNames)
+    {
+        if (!string.IsNullOrWhiteSpace(holdingPointName))
+        {
+            string cleanHp = holdingPointName.Trim();
+            if (cleanHp.StartsWith("Holding point ", StringComparison.OrdinalIgnoreCase))
+            {
+                cleanHp = cleanHp["Holding point ".Length..].Trim();
+            }
+
+            if (cleanHp.Contains("entrance", StringComparison.OrdinalIgnoreCase) || cleanHp.Contains("runway", StringComparison.OrdinalIgnoreCase))
+            {
+                return cleanHp;
+            }
+
+            return $"{cleanHp} (Runway {cleanRwy} entrance)";
+        }
+
+        if (taxiwayNames != null && taxiwayNames.Count > 0)
+        {
+            return $"{taxiwayNames[^1]} (Runway {cleanRwy} entrance)";
+        }
+
+        return $"Runway {cleanRwy} entrance";
     }
 
     private static string FormatDistance(double meters)

@@ -17,7 +17,17 @@ public sealed record PlannedDeparturePlan
     public required PushbackPlan Pushback { get; init; }
     public required TaxiRoute Route { get; init; }
     public int DestinationNodeId { get; init; }
+    public string DestinationName { get; init; } = "";
     public string HoldingPointName { get; init; } = "";
+    public int? HoldingPointHoldNodeId { get; init; }
+    public System.Collections.Generic.List<string>? TaxiwaySequence { get; init; }
+    public double? DestinationHeading { get; init; }
+    public double? DestinationHeadingTrue { get; init; }
+    public double? ThresholdLat { get; init; }
+    public double? ThresholdLon { get; init; }
+    public bool PreferIlsHold { get; init; }
+    public bool FullLengthBacktrack { get; init; }
+    public bool IntersectionDeparture { get; init; }
     public double TargetHeadingMag { get; init; }
     public double OriginLat { get; init; }
     public double OriginLon { get; init; }

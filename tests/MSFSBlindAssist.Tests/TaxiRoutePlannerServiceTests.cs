@@ -431,6 +431,75 @@ public class TaxiRoutePlannerServiceTests
         Assert.False(TaxiPlannedRouteState.Instance.HasArmedArrival);
     }
 
+    [Fact]
+    public void PlannedDeparturePlan_StoresExtendedRoutingParameters()
+    {
+        var plan = new PlannedDeparturePlan
+        {
+            AirportIcao = "SBGL",
+            RunwayId = "10",
+            Pushback = new PushbackPlan(),
+            Route = new TaxiRoute(),
+            DestinationNodeId = 100,
+            DestinationName = "Runway 10",
+            HoldingPointName = "R",
+            HoldingPointHoldNodeId = 55,
+            TaxiwaySequence = new List<string> { "L1", "R" },
+            DestinationHeading = 98.0,
+            DestinationHeadingTrue = 120.0,
+            ThresholdLat = -22.8100,
+            ThresholdLon = -43.2500,
+            PreferIlsHold = true,
+            FullLengthBacktrack = false,
+            IntersectionDeparture = false,
+            TargetHeadingMag = 335.0,
+            OriginLat = -22.8120,
+            OriginLon = -43.2450,
+            Summary = "Departure taxi plan"
+        };
+
+        Assert.Equal(55, plan.HoldingPointHoldNodeId);
+        Assert.Equal("R", plan.HoldingPointName);
+        Assert.Equal(98.0, plan.DestinationHeading);
+        Assert.Equal(-22.8100, plan.ThresholdLat);
+        Assert.Equal(-43.2500, plan.ThresholdLon);
+        Assert.True(plan.PreferIlsHold);
+        Assert.NotNull(plan.TaxiwaySequence);
+        Assert.Equal(2, plan.TaxiwaySequence!.Count);
+    }
+
+    [Fact]
+    public void LandingExit_RunwayAxisProjection_DeterminesRecommendedSide()
+    {
+        // Runway pointing North (Start: 0, 0, End: 0.02, 0)
+        var runway = new Runway
+        {
+            RunwayID = "36",
+            StartLat = 0.0,
+            StartLon = 0.0,
+            EndLat = 0.02,
+            EndLon = 0.0,
+            Heading = 0.0
+        };
+
+        var axis = RunwayAxis.For(runway);
+
+        // Gate placed to the East (Right of runway centerline)
+        var rightGate = new ParkingSpot
+        {
+            Name = "Gate",
+            Number = 1,
+            Latitude = 0.01,
+            Longitude = 0.005
+        };
+
+        var proj = axis.Project(rightGate.Latitude, rightGate.Longitude);
+        Assert.True(proj.LateralMetres > 5.0, "Gate should project onto the Right (positive lateral metres)");
+
+        string preferredSide = proj.LateralMetres > 5.0 ? "Right" : (proj.LateralMetres < -5.0 ? "Left" : "Any");
+        Assert.Equal("Right", preferredSide);
+    }
+
     private sealed class FakeAirportDataProvider : IAirportDataProvider
     {
         public bool DatabaseExists => true;
