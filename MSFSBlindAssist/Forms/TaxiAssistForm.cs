@@ -3,10 +3,11 @@ using MSFSBlindAssist.Accessibility;
 using MSFSBlindAssist.Database;
 using MSFSBlindAssist.Database.Models;
 using MSFSBlindAssist.Navigation;
+using MSFSBlindAssist.Navigation.Planning;
 using MSFSBlindAssist.Services;
 using MSFSBlindAssist.Services.SayIntentions;
 using MSFSBlindAssist.Settings;
-using MSFSBlindAssist.Utils.Logging;
+    using MSFSBlindAssist.Utils.Logging;
 
 namespace MSFSBlindAssist.Forms;
 
@@ -4740,14 +4741,6 @@ public class TaxiAssistForm : Form
             return;
         }
 
-        if (_graph == null || string.IsNullOrEmpty(_currentIcao) || _dataProvider == null)
-        {
-            string notReady = "Airport data not loaded. Please select an airport.";
-            _announcer.AnnounceImmediate(notReady);
-            lblStatus.Text = notReady;
-            return;
-        }
-
         bool isRunway = cmbDestType.SelectedIndex == 0;
         if (!isRunway)
         {
@@ -4758,204 +4751,15 @@ public class TaxiAssistForm : Form
             return;
         }
 
-        // DEPARTURE FLOW — Reuses the exact same resolution and LoadRoute as Calculate,
-        // so holding point pinning, threshold lineup, and hold-shorts are 100% identical!
-        string? destLabel = cmbDestination.SelectedItem?.ToString();
-        if (string.IsNullOrEmpty(destLabel) || !_destinationNodeMap.TryGetValue(destLabel, out int destNodeId))
-        {
-            string noDest = "Please select a departure runway.";
-            AnnounceCalculateAbort(noDest);
-            ShowRouteFailure(noDest, keepSummary: _guidanceManager.HasLiveRoute);
-            return;
-        }
-
-        string destName = StripBacktrackSuffix(destLabel);
-        string cleanRwy = destName.StartsWith("Runway ", StringComparison.OrdinalIgnoreCase)
-            ? destName.Substring(7).Trim() : destName.Trim();
-
-        var taxiwaySequence = GetSelectedTaxiwayNames();
-        var userHoldShorts = GetUserHoldShortIndices();
-        var userRunwayHoldShorts = GetUserRunwayHoldShorts();
-        var userTaxiwayHoldShorts = GetUserTaxiwayHoldShorts();
-        var userHoldingPointHoldShorts = GetUserHoldingPointHoldShorts();
-
-        double? destHeading = _destinationHeadingMap.TryGetValue(destLabel, out double h) ? h : null;
-        double? destHeadingTrue = _destinationHeadingTrueMap.TryGetValue(destLabel, out double ht) ? ht : null;
-        double? thresholdLat = null, thresholdLon = null;
-        if (_destinationThresholdMap.TryGetValue(destLabel, out var threshold))
-        {
-            thresholdLat = threshold.lat;
-            thresholdLon = threshold.lon;
-        }
-
-        bool backtrackActive = false;
-        if (chkFullLengthBacktrack.Checked && _graph != null)
-        {
-            if (_cachedRunways == null || _cachedRunwaysIcao != _currentIcao)
-            {
-                _cachedRunways = _dataProvider.GetRunways(_currentIcao);
-                _cachedRunwaysIcao = _currentIcao;
-            }
-            var rwy = _cachedRunways
-                .FirstOrDefault(r => string.Equals(r.RunwayID, cleanRwy, StringComparison.OrdinalIgnoreCase));
-            if (rwy != null)
-            {
-                double halfWidthM = (rwy.Width > 0 ? rwy.Width : 150.0) * 0.3048 / 2.0;
-                var entry = _graph.FindBacktrackEntryNode(
-                    rwy.StartLat, rwy.StartLon, rwy.EndLat, rwy.EndLon, halfWidthM,
-                    _aircraftLat, _aircraftLon);
-                if (entry != null)
-                {
-                    destNodeId = entry.NodeId;
-                    backtrackActive = true;
-                }
-            }
-        }
-
-        TaxiGraph.RunwayIntersection? intersection = null;
-        if (!backtrackActive && chkIntersection.Checked
-            && cmbIntersection.SelectedItem is string interLabel
-            && _intersectionMap.TryGetValue(interLabel, out var ix))
-        {
-            intersection = ix;
-            destNodeId = ix.NodeId;
-            thresholdLat = ix.Latitude;
-            thresholdLon = ix.Longitude;
-        }
-
-        TaxiGraph.RunwayIntersection? holdingPointEntry = null;
-        string? holdingPointName = null;
-        if (!backtrackActive && intersection == null && chkHoldingPoint.Checked
-            && cmbHoldingPoint.SelectedItem is string hpLabel
-            && _holdingPointMap.TryGetValue(hpLabel, out var hp))
-        {
-            holdingPointEntry = hp.Entry;
-            holdingPointName = hp.Entry?.TaxiwayName;
-            destNodeId = hp.Entry.NodeId;
-            if (hp.Partway)
-            {
-                thresholdLat = hp.Entry.Latitude;
-                thresholdLon = hp.Entry.Longitude;
-            }
-        }
-        else if (!backtrackActive && intersection == null && !chkIntersection.Checked)
-        {
-            var fullLength = ResolveHoldingPointsForRunway(destLabel)
-                .Where(r => !r.Partway)
-                .ToList();
-            if (fullLength.Count > 0)
-            {
-                var normal = fullLength.FirstOrDefault(
-                    r => string.Equals(r.Kind.Trim(), "runway", StringComparison.OrdinalIgnoreCase));
-                if (normal.Entry == null) normal = fullLength[0];
-                if (normal.Entry != null)
-                {
-                    holdingPointEntry = normal.Entry;
-                    holdingPointName = normal.Entry.TaxiwayName;
-                    destNodeId = normal.Entry.NodeId;
-                }
-            }
-            else
-            {
-                string? entrance = ResolveFullLengthEntranceName(destLabel);
-                if (!string.IsNullOrEmpty(entrance))
-                {
-                    holdingPointName = entrance;
-                }
-            }
-        }
-
-        var mainTurnPicks = GetUserTurnPicks();
-        string? error = _guidanceManager.LoadRoute(
-            dataProvider: _dataProvider,
-            icao: _currentIcao,
-            aircraftLat: _aircraftLat,
-            aircraftLon: _aircraftLon,
-            aircraftHeading: AircraftHeadingTrue(),
-            destinationNodeId: destNodeId,
-            destinationName: destName,
-            taxiwaySequence: taxiwaySequence.Count > 0 ? taxiwaySequence : null,
-            userHoldShortIndices: userHoldShorts,
-            destinationHeading: destHeading,
-            destinationThresholdLat: thresholdLat,
-            destinationThresholdLon: thresholdLon,
-            destinationHeadingTrue: destHeadingTrue,
-            isRunwayDestination: true,
-            prebuiltGraph: _graph,
-            userRunwayHoldShorts: userRunwayHoldShorts.Count > 0 ? userRunwayHoldShorts : null,
-            userTaxiwayHoldShorts: userTaxiwayHoldShorts.Count > 0 ? userTaxiwayHoldShorts : null,
-            preferIlsHold: chkCatIiiHold.Checked,
-            fullLengthBacktrack: backtrackActive,
-            holdingPointHoldNodeId: holdingPointEntry?.HoldNodeId,
-            holdingPointName: holdingPointEntry?.TaxiwayName ?? holdingPointName,
-            intersectionDeparture: intersection != null,
-            userHoldingPointHoldShorts: userHoldingPointHoldShorts.Count > 0 ? userHoldingPointHoldShorts : null,
-            userTurnPicks: mainTurnPicks.Count > 0 ? mainTurnPicks : null,
-            announceSummary: false);
-
-        if (error != null)
-        {
-            AnnounceCalculateAbort(error);
-            ShowRouteFailure(error, keepSummary: _guidanceManager.HasLiveRoute);
-            return;
-        }
-
-        // The route is valid! Stop guidance so tones do not start yet.
-        _guidanceManager.StopGuidance();
-
-        var computedRoute = _guidanceManager.CurrentRoute ?? new TaxiRoute();
-        var gateSpots = EnsureGateSpotCache().Select(g => g.spot).ToList();
-        var nearestGate = PushbackGeometryPlanner.FindNearestSpot(gateSpots, _aircraftLat, _aircraftLon);
-        double magVar = _dataProvider.GetAirport(_currentIcao)?.MagVar ?? 0.0;
-
-        var pushback = PushbackGeometryPlanner.PlanPushback(
-            _aircraftLat, _aircraftLon,
-            magVar,
-            _graph,
-            nearestGate,
-            computedRoute);
-
-        string effectiveHold = holdingPointEntry?.TaxiwayName ?? holdingPointName ?? "";
-        string summary = TaxiRoutePlannerService.FormatDepartureSummary(
-            cleanRwy, nearestGate, pushback, computedRoute, effectiveHold);
-
-        var plan = new PlannedDeparturePlan
-        {
-            AirportIcao = _currentIcao,
-            RunwayId = cleanRwy,
-            Spot = nearestGate,
-            Pushback = pushback,
-            Route = computedRoute,
-            DestinationNodeId = destNodeId,
-            DestinationName = destName,
-            HoldingPointName = effectiveHold,
-            HoldingPointHoldNodeId = holdingPointEntry?.HoldNodeId,
-            TaxiwaySequence = taxiwaySequence.Count > 0 ? taxiwaySequence : null,
-            DestinationHeading = destHeading,
-            DestinationHeadingTrue = destHeadingTrue,
-            ThresholdLat = thresholdLat,
-            ThresholdLon = thresholdLon,
-            PreferIlsHold = chkCatIiiHold.Checked,
-            FullLengthBacktrack = backtrackActive,
-            IntersectionDeparture = intersection != null,
-            TargetHeadingMag = pushback.PostPushbackHeadingMag,
-            OriginLat = _aircraftLat,
-            OriginLon = _aircraftLon,
-            Summary = summary
-        };
-
-        _guidanceManager.ArmDeparturePlan(plan, _graph, _dataProvider);
-        txtRouteSummary.Text = plan.Summary;
-        lblStatus.Text = "Departure route planned. Guidance will auto-start after pushback.";
-
-        string pushDesc = plan.Pushback.NeedsPushback ? $"{plan.Pushback.Summary}. " : "";
-        string via = plan.Route.TaxiwaySequence.Count > 0 ? $" via {string.Join(", ", plan.Route.TaxiwaySequence)}" : "";
-        _announcer.AnnounceImmediate($"Departure route planned for Runway {cleanRwy}. {pushDesc}Guidance will auto-start after pushback.");
-        txtRouteSummary.Focus();
-    }
+        ExecuteCalculate(startGuidance: false);
     }
 
     private void OnCalculateClicked(object? sender, EventArgs e)
+    {
+        ExecuteCalculate(startGuidance: true);
+    }
+
+    private void ExecuteCalculate(bool startGuidance)
     {
         if (_graph == null)
         {
@@ -5398,16 +5202,44 @@ public class TaxiAssistForm : Form
         // projection (intersection semantics); a full-length entry keeps the
         // start-table lineup point and just forces WHICH stub is used.
         TaxiGraph.RunwayIntersection? holdingPointEntry = null;
+        string? holdingPointName = null;
         if (!backtrackActive && intersection == null && isRunwayDest && chkHoldingPoint.Checked
             && cmbHoldingPoint.SelectedItem is string hpLabel
             && _holdingPointMap.TryGetValue(hpLabel, out var hp))
         {
             holdingPointEntry = hp.Entry;
+            holdingPointName = hp.Entry.TaxiwayName;
             destNodeId = hp.Entry.NodeId;
             if (hp.Partway)
             {
                 thresholdLat = hp.Entry.Latitude;
                 thresholdLon = hp.Entry.Longitude;
+            }
+        }
+        else if (!backtrackActive && intersection == null && isRunwayDest && !chkIntersection.Checked)
+        {
+            var fullLength = ResolveHoldingPointsForRunway(destLabel)
+                .Where(r => !r.Partway)
+                .ToList();
+            if (fullLength.Count > 0)
+            {
+                var normal = fullLength.FirstOrDefault(
+                    r => string.Equals(r.Kind.Trim(), "runway", StringComparison.OrdinalIgnoreCase));
+                if (normal.Entry == null) normal = fullLength[0];
+                if (normal.Entry != null)
+                {
+                    holdingPointEntry = normal.Entry;
+                    holdingPointName = normal.Entry.TaxiwayName;
+                    destNodeId = normal.Entry.NodeId;
+                }
+            }
+            else
+            {
+                string? entrance = ResolveFullLengthEntranceName(destLabel);
+                if (!string.IsNullOrEmpty(entrance))
+                {
+                    holdingPointName = entrance;
+                }
             }
         }
 
@@ -5433,7 +5265,7 @@ public class TaxiAssistForm : Form
             holdingPointHoldNodeId: holdingPointEntry?.HoldNodeId,
             // The point's label ("A1") so the hold-short stop can name the line the
             // pilot picked — spoken only when the stop node IS that point's node.
-            holdingPointName: holdingPointEntry?.TaxiwayName,
+            holdingPointName: holdingPointEntry?.TaxiwayName ?? holdingPointName,
             intersectionDeparture: intersection != null,
             userHoldingPointHoldShorts: userHoldingPointHoldShorts.Count > 0 ? userHoldingPointHoldShorts : null,
             userTurnPicks: mainTurnPicks.Count > 0 ? mainTurnPicks : null);
@@ -5489,6 +5321,63 @@ public class TaxiAssistForm : Form
         }
 
         CheckGateOccupancy(isRunwayDest, thresholdLat, thresholdLon);
+
+        if (!startGuidance)
+        {
+            // Plan route departure flow: route is calculated and validated, guidance tones stay stopped until pushback completes
+            _guidanceManager.StopGuidance();
+
+            string cleanRwy = destName.StartsWith("Runway ", StringComparison.OrdinalIgnoreCase)
+                ? destName.Substring(7).Trim() : destName.Trim();
+
+            var computedRoute = _guidanceManager.CurrentRoute ?? new TaxiRoute();
+            var gateSpots = EnsureGateSpotCache().Select(g => g.spot).ToList();
+            var nearestGate = TaxiRoutePlannerService.FindCurrentParkingSpot(_aircraftLat, _aircraftLon, gateSpots);
+            double magVar = _dataProvider.GetAirport(_currentIcao)?.MagVar ?? 0.0;
+
+            var pushback = PushbackGeometryPlanner.CalculatePushback(
+                nearestGate,
+                computedRoute,
+                magVar);
+
+            string effectiveHold = holdingPointEntry?.TaxiwayName ?? holdingPointName ?? "";
+            string summary = TaxiRoutePlannerService.FormatDepartureSummary(
+                _currentIcao, cleanRwy, nearestGate, pushback, computedRoute, effectiveHold);
+
+            var plan = new PlannedDeparturePlan
+            {
+                AirportIcao = _currentIcao,
+                RunwayId = cleanRwy,
+                Spot = nearestGate,
+                Pushback = pushback,
+                Route = computedRoute,
+                DestinationNodeId = destNodeId,
+                DestinationName = destName,
+                HoldingPointName = effectiveHold,
+                HoldingPointHoldNodeId = holdingPointEntry?.HoldNodeId,
+                TaxiwaySequence = taxiwaySequence.Count > 0 ? taxiwaySequence : null,
+                DestinationHeading = destHeading,
+                DestinationHeadingTrue = destHeadingTrue,
+                ThresholdLat = thresholdLat,
+                ThresholdLon = thresholdLon,
+                PreferIlsHold = chkCatIiiHold.Checked,
+                FullLengthBacktrack = backtrackActive,
+                IntersectionDeparture = intersection != null,
+                TargetHeadingMag = pushback.PostPushbackHeadingMag,
+                OriginLat = _aircraftLat,
+                OriginLon = _aircraftLon,
+                Summary = summary
+            };
+
+            _guidanceManager.ArmDeparturePlan(plan, _graph, _dataProvider);
+            txtRouteSummary.Text = plan.Summary;
+            lblStatus.Text = "Departure route planned. Guidance will auto-start after pushback.";
+
+            string pushDesc = plan.Pushback.NeedsPushback ? $"{plan.Pushback.Summary}. " : "";
+            _announcer.AnnounceImmediate($"Departure route planned for Runway {cleanRwy}. {pushDesc}Guidance will auto-start after pushback.");
+            txtRouteSummary.Focus();
+            return;
+        }
 
         _guidanceManager.StartGuidance(settings);
 
